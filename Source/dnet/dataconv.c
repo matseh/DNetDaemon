@@ -5,17 +5,14 @@
  *  Data Conversion.
  */
 
+#include <stdio.h>
+#include "../lib/dnetutil.h"
+
 typedef unsigned char ubyte;
 typedef unsigned short uword;
 typedef unsigned long ulong;
 
-extern ubyte DDebug;
-
-int
-Compress7(s, db, n)
-ubyte *s;
-ubyte *db;
-uword n;    /*	actual source bytes */
+int Compress7(ubyte *s,ubyte *db,uword n)
 {
     ubyte *d = db;
 
@@ -60,11 +57,7 @@ uword n;    /*	actual source bytes */
     return(d - db);
 }
 
-void
-UnCompress7(s, d, n)
-ubyte *s;
-ubyte *d;
-uword n;    /*	actual destination bytes */
+void UnCompress7(ubyte *s,ubyte *d,uword n)
 {
     while (n) {
 	*d++ = s[0] >> 1;
@@ -103,11 +96,7 @@ uword n;    /*	actual destination bytes */
 }
 
 
-int
-Expand6(s, db, n)
-ubyte *s;
-ubyte *db;
-uword n;    /*	actual source bytes */
+int Expand6(ubyte *s,ubyte *db,uword n)
 {
     ubyte *d = db;
     ubyte *sb= s;
@@ -125,19 +114,14 @@ uword n;    /*	actual source bytes */
 	    }
 	}
     }
-    if (DDebug)
-	printf("e6: %02x %02x -> %02x %02x %02x\n", 
+	Log(LogLevelDebug, "e6: %02x %02x -> %02x %02x %02x\n", 
 	    sb[0], sb[1],
 	    db[0], db[1], db[2]
 	);
     return(d - db);
 }
 
-void
-UnExpand6(s, d, n)
-ubyte *s;
-ubyte *d;
-uword n;    /*	actual destination bytes */
+void UnExpand6(ubyte *s,ubyte *d,uword n)
 {
     ubyte *sb = s;
     ubyte *db = d;
@@ -153,12 +137,8 @@ uword n;    /*	actual destination bytes */
 	--n;
 	s += 4;
     }
-    if (DDebug)
-	printf("d6: %02x %02x <- %02x %02x %02x\n", 
+	Log(LogLevelDebug, "d6: %02x %02x <- %02x %02x %02x\n", 
 	    db[0], db[1],
 	    sb[0], sb[1], sb[2]
 	);
 }
-
-
-

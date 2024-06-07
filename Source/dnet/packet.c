@@ -3,356 +3,328 @@
  *  PACKET.C
  */
 
+#include <string.h>
 #include "dnet.h"
-
-void BuildPacket();
+#include "../lib/dnetutil.h"
 
 #define Ascize(foo) (((foo) & 0x3F) | 0x40)
 
-ubyte	RxTmp[MAXPACKET];
+ubyte   RxTmp[MAXPACKET];
 
-void
-BuildDataPacket(pkt, win, dbuf, actlen)
-PKT	*pkt;
-ubyte	win;
-ubyte	*dbuf;
-uword	actlen;
+void BuildPacket(PKT *pkt,ubyte ctl,int win,ubyte *dbuf,uword actlen,uword buflen);
+
+void BuildDataPacket(PKT *pkt,ubyte win,ubyte *dbuf,uword actlen)
 {
     ubyte *ptr;
     ubyte *pend;
     ubyte range = 0;
     static ubyte BadCtl[32] = {
-	1, 1, 1, 1, 1, 1, 1, 1,
-	1, 1, 1, 1, 1, 1, 1, 1,
-	1, 1, 1, 1, 1, 1, 1, 1,
-	1, 1, 1, 1, 1, 1, 1, 1
+        1, 1, 1, 1, 1, 1, 1, 1,
+        1, 1, 1, 1, 1, 1, 1, 1,
+        1, 1, 1, 1, 1, 1, 1, 1,
+        1, 1, 1, 1, 1, 1, 1, 1
     };
 
     ptr = dbuf;
     pend= dbuf + actlen;
 
     while (ptr < pend) {
-	if (*ptr < 0x20 && BadCtl[*ptr])
-	    range |= 1;
-	if (*ptr >= 0x80)
-	    range |= 2;
-	++ptr;
+        if (*ptr < 0x20 && BadCtl[*ptr])
+            range |= 1;
+        if (*ptr >= 0x80)
+            range |= 2;
+        ++ptr;
     }
     if (Mode7 && range) {
-	uword buflen = Expand6(dbuf, pkt->data, actlen);
-	BuildPacket(pkt, PKCMD_WRITE6, win, pkt->data, actlen, buflen);
+        uword buflen = Expand6(dbuf, pkt->data, actlen);
+        BuildPacket(pkt, PKCMD_WRITE6, win, pkt->data, actlen, buflen);
     } else {
-	if (Mode7 || (range & 2)) {
-	    BuildPacket(pkt, PKCMD_WRITE, win, dbuf, actlen, actlen);
-	} else {
-	    uword buflen = Compress7(dbuf, pkt->data, actlen);
-	    BuildPacket(pkt, PKCMD_WRITE7, win, pkt->data, actlen, buflen);
-	}
+        if (Mode7 || (range & 2)) {
+            BuildPacket(pkt, PKCMD_WRITE, win, dbuf, actlen, actlen);
+        } else {
+            uword buflen = Compress7(dbuf, pkt->data, actlen);
+            BuildPacket(pkt, PKCMD_WRITE7, win, pkt->data, actlen, buflen);
+        }
     }
 }
 
-PKT *
-BuildRestartAckPacket(dbuf, bytes)
-ubyte *dbuf;
-ubyte bytes;
+PKT *BuildRestartAckPacket(ubyte *dbuf,ubyte bytes)
 {
     static PKT pkt;
     BuildPacket(&pkt, PKCMD_ACKRSTART, 0, dbuf, bytes, bytes);
     return(&pkt);
 }
 
-void
-BuildPacket(pkt, ctl, win, dbuf, actlen, buflen)
-PKT	*pkt;
-ubyte	ctl;
-ubyte	*dbuf;
-uword	actlen;
-uword	buflen;
+void BuildPacket(PKT *pkt,ubyte ctl,int win,ubyte *dbuf,uword actlen,uword buflen)
 {
     pkt->buflen = buflen;
     pkt->sync = SYNC;
     pkt->ctl = ctl | win;
     pkt->cchk = Ascize((pkt->sync << 1) ^ pkt->ctl);
     if (actlen) {
-	uword chk = chkbuf(dbuf, buflen);
-	ubyte dchkh = chk >> 8;
-	ubyte dchkl = chk;
+        uword chk = chkbuf(dbuf, buflen);
+        ubyte dchkh = chk >> 8;
+        ubyte dchkl = chk;
 
-	pkt->lenh = Ascize(actlen >> 6);
-	pkt->lenl = Ascize(actlen);
-	pkt->dchkh= Ascize(dchkh);
-	pkt->dchkl= Ascize(dchkl);
-	if (dbuf != pkt->data)
-	    bcopy(dbuf, pkt->data, buflen);
+        pkt->lenh = Ascize(actlen >> 6);
+        pkt->lenl = Ascize(actlen);
+        pkt->dchkh= Ascize(dchkh);
+        pkt->dchkl= Ascize(dchkl);
+        if (dbuf != pkt->data)
+            bcopy(dbuf, pkt->data, buflen);
     }
 }
 
-void
-WritePacket(pkt)
-PKT *pkt;
+void WritePacket(PKT *pkt)
 {
-    if (DDebug)
-	printf("SEND-PACKET %02x %d\n", pkt->ctl, pkt->buflen);
+    Log(LogLevelDebug, "SEND-PACKET %02x %d\n", pkt->ctl, pkt->buflen);
 
     if (pkt->buflen)
-	NetWrite(&pkt->sync, 7 + pkt->buflen);
+        NetWrite(&pkt->sync, 7 + pkt->buflen);
     else
-	NetWrite(&pkt->sync, 3);
+        NetWrite(&pkt->sync, 3);
     switch(pkt->ctl) {
     case PKCMD_WRITE:
     case PKCMD_WRITE6:
     case PKCMD_WRITE7:
     case PKCMD_RESTART:
-	WTimeout(WTIME);
+        WTimeout(WTIME);
     }
 }
 
-void
-WriteCtlPacket(ctl, win)
+void WriteCtlPacket(int ctl, int win)
 {
     static CTLPKT pkt;
 
     NetWrite(NULL, 0);
-    BuildPacket(&pkt, ctl, win, NULL, 0, 0);
-    WritePacket(&pkt);
+    BuildPacket((PKT *) &pkt, ctl, win, NULL, 0, 0);
+    WritePacket((PKT *) &pkt);
 }
 
-void
-WriteNak(win)
+void WriteNak(int win)
 {
     WriteCtlPacket(PKCMD_NAK, win);
 }
 
-void
-WriteAck(win)
+void WriteAck(int win)
 {
     WriteCtlPacket(PKCMD_ACK, win);
 }
 
-void
-WriteChk(win)
+void WriteChk(int win)
 {
     WriteCtlPacket(PKCMD_CHECK, win);
 }
 
-void
-WriteRestart()
+void WriteRestart(void)
 {
     WriteCtlPacket(PKCMD_RESTART, 0);
 }
 
 /*
- *	RECEIVE A PACKET
+ *      RECEIVE A PACKET
  */
 
-int
-RecvPacket(ptr, len)
-ubyte *ptr;
-long len;
+int RecvPacket(ubyte *ptr,long len)
 {
-    static uword ActLen;    /*	actual # bytes after decoding */
-    static uword BufLen;    /*	length of input data buffer   */
-    static uword DBLen;     /*	# bytes already in i.d.buf    */
+    static uword ActLen;    /*  actual # bytes after decoding */
+    static uword BufLen;    /*  length of input data buffer   */
+    static uword DBLen;     /*  # bytes already in i.d.buf    */
     static ubyte RState;
-    static PKT	 Pkt;
+    static PKT   Pkt;
     ubyte  *dptr;
     short expect;
 
     if (ptr == NULL) {
-	RState = 0;
-	return(3);
+        RState = 0;
+        return(3);
     }
 
     while (len) {
-	switch(RState) {
-	case 0:
-	    --len;
-	    Pkt.sync = *ptr++;
+        switch(RState) {
+        case 0:
+            --len;
+            Pkt.sync = *ptr++;
 
-	    if (Pkt.sync == SYNC)
-		++RState;
-	    break;
-	case 1: 	/*  CTL */
-	    --len;
-	    Pkt.ctl = *ptr++;
+            if (Pkt.sync == SYNC)
+                ++RState;
+            break;
+        case 1:         /*  CTL */
+            --len;
+            Pkt.ctl = *ptr++;
 
-	    if (Pkt.ctl < 0x20 || Pkt.ctl > 0x7F) {
-		RState = 0;
-		break;
-	    }
-	    ++RState;
-	    break;
-	case 2: 	/*  CCHK    */
-	    --len;
-	    Pkt.cchk = *ptr++;
+            if (Pkt.ctl < 0x20 || Pkt.ctl > 0x7F) {
+                RState = 0;
+                break;
+            }
+            ++RState;
+            break;
+        case 2:         /*  CCHK    */
+            --len;
+            Pkt.cchk = *ptr++;
 
-	    if (Ascize((SYNC<<1) ^ Pkt.ctl) != Pkt.cchk) {
-		RState = 0;
-		break;
-	    }
-	    switch(Pkt.ctl & PKF_MASK) {
-	    case PKCMD_ACKRSTART:
-	    case PKCMD_WRITE:
-	    case PKCMD_WRITE6:
-	    case PKCMD_WRITE7:
-		if (DDebug)
-		    printf("Recv Header %02x\n", Pkt.ctl & PKF_MASK);
-		++RState;
-		break;
-	    default:
-		if (DDebug)
-		    printf("Recv Control %02x\n", Pkt.ctl & PKF_MASK);
-		do_cmd(Pkt.ctl, NULL, 0);
-		RState = 0;
-		break;
-	    }
-	    break;
-	case 3: 	/*  LENH    */
-	    --len;
-	    Pkt.lenh = *ptr++;
+            if (Ascize((SYNC<<1) ^ Pkt.ctl) != Pkt.cchk) {
+                RState = 0;
+                break;
+            }
+            switch(Pkt.ctl & PKF_MASK) {
+            case PKCMD_ACKRSTART:
+            case PKCMD_WRITE:
+            case PKCMD_WRITE6:
+            case PKCMD_WRITE7:
+                Log(LogLevelDebug, "Recv Header %02x\n", Pkt.ctl & PKF_MASK);
+                ++RState;
+                break;
+            default:
+                Log(LogLevelDebug, "Recv Control %02x\n", Pkt.ctl & PKF_MASK);
+                do_cmd(Pkt.ctl, NULL, 0);
+                RState = 0;
+                break;
+            }
+            break;
+        case 3:         /*  LENH    */
+            --len;
+            Pkt.lenh = *ptr++;
 
-	    ++RState;
-	    if (Pkt.lenh < 0x20 || Pkt.lenh > 0x7F)
-		RState = 0;
-	    break;
-	case 4: 	/*  LENL    */
-	    --len;
-	    Pkt.lenl = *ptr++;
+            ++RState;
+            if (Pkt.lenh < 0x20 || Pkt.lenh > 0x7F)
+                RState = 0;
+            break;
+        case 4:         /*  LENL    */
+            --len;
+            Pkt.lenl = *ptr++;
 
-	    if (Pkt.lenl < 0x20 || Pkt.lenl > 0x7F) {
-		RState = 0;
-		break;
-	    }
+            if (Pkt.lenl < 0x20 || Pkt.lenl > 0x7F) {
+                RState = 0;
+                break;
+            }
 
-	    ++RState;
+            ++RState;
 
-	    ActLen = ((Pkt.lenh & 0x3F) << 6) | (Pkt.lenl & 0x3F);
-	    DBLen = 0;
+            ActLen = ((Pkt.lenh & 0x3F) << 6) | (Pkt.lenl & 0x3F);
+            DBLen = 0;
 
-	    switch(Pkt.ctl & PKF_MASK) {
-	    case PKCMD_ACKRSTART:
-	    case PKCMD_WRITE:
-		BufLen = ActLen;
-		break;
-	    case PKCMD_WRITE6:
-		BufLen = (ActLen * 8 + 5) / 6;
-		break;
-	    case PKCMD_WRITE7:
-		BufLen = (ActLen * 7 + 7) / 8;
-		break;
-	    default:
-		puts("BaD");
-		break;
-	    }
+            switch(Pkt.ctl & PKF_MASK) {
+            case PKCMD_ACKRSTART:
+            case PKCMD_WRITE:
+                BufLen = ActLen;
+                break;
+            case PKCMD_WRITE6:
+                BufLen = (ActLen * 8 + 5) / 6;
+                break;
+            case PKCMD_WRITE7:
+                BufLen = (ActLen * 7 + 7) / 8;
+                break;
+            default:
+                puts("BaD");
+                break;
+            }
 
-	    if (ActLen > MAXPKT || BufLen > MAXPACKET) {
-		if (DDebug || DDebug)
-		    printf("Packet Length Error %d %d\n", ActLen, BufLen);
-		RState = 0;
-	    }
-	    break;
-	case 5: 	/*  DChkH   */
-	    --len;
-	    Pkt.dchkh = *ptr++;
+            if (ActLen > MAXPKT || BufLen > MAXPACKET) {
+                Log(LogLevelDebug, "Packet Length Error %d %d\n", ActLen, BufLen);
+                RState = 0;
+            }
+            break;
+        case 5:         /*  DChkH   */
+            --len;
+            Pkt.dchkh = *ptr++;
 
-	    ++RState;
-	    if (Pkt.dchkh < 0x20 || Pkt.dchkh > 0x7F)
-		RState = 0;
-	    break;
-	case 6: 	/*  DCHKL   */
-	    --len;
-	    Pkt.dchkl = *ptr++;
+            ++RState;
+            if (Pkt.dchkh < 0x20 || Pkt.dchkh > 0x7F)
+                RState = 0;
+            break;
+        case 6:         /*  DCHKL   */
+            --len;
+            Pkt.dchkl = *ptr++;
 
-	    ++RState;
-	    if (Pkt.dchkl < 0x20 || Pkt.dchkl > 0x7F)
-		RState = 0;
-	    break;
-	case 7: 	/*  -DATA-  */
-	    if (DBLen + len < BufLen) {     /*  not enough  */
-		bcopy(ptr, Pkt.data + DBLen, len);
-		DBLen += len;
-		len = 0;
-		break;
-	    }
+            ++RState;
+            if (Pkt.dchkl < 0x20 || Pkt.dchkl > 0x7F)
+                RState = 0;
+            break;
+        case 7:         /*  -DATA-  */
+            if (DBLen + len < BufLen) {     /*  not enough  */
+                bcopy(ptr, Pkt.data + DBLen, len);
+                DBLen += len;
+                len = 0;
+                break;
+            }
 
-	    /*
-	     *	Enough data, check chk
-	     */
+            /*
+             *  Enough data, check chk
+             */
 
-	    bcopy(ptr, Pkt.data + DBLen, BufLen - DBLen);
-	    len -= BufLen - DBLen;
-	    ptr += BufLen - DBLen;
+            bcopy(ptr, Pkt.data + DBLen, BufLen - DBLen);
+            len -= BufLen - DBLen;
+            ptr += BufLen - DBLen;
 
-	    {
-		uword chk;
-		ubyte chkh;
-		ubyte chkl;
+            {
+                uword chk;
+                ubyte chkh;
+                ubyte chkl;
 
-		chk = chkbuf(Pkt.data, BufLen);
-		chkh = Ascize(chk >> 8);
-		chkl = Ascize(chk);
+                chk = chkbuf(Pkt.data, BufLen);
+                chkh = Ascize(chk >> 8);
+                chkl = Ascize(chk);
 
-		if (Pkt.dchkh != chkh || Pkt.dchkl != chkl) {
-		    printf("Chksum failure %02x %02x %02x %02x\n",
-			Pkt.dchkh, chkh, Pkt.dchkl, chkl
-		    );
-		    RState = 0;
-		    break;
-		}
-	    }
+                if (Pkt.dchkh != chkh || Pkt.dchkl != chkl) {
+                    printf("Chksum failure %02x %02x %02x %02x\n",
+                        Pkt.dchkh, chkh, Pkt.dchkl, chkl
+                    );
+                    RState = 0;
+                    break;
+                }
+            }
 
-	    switch(Pkt.ctl & PKF_MASK) {
-	    case PKCMD_ACKRSTART:
-		dptr = Pkt.data;
-		break;
-	    case PKCMD_WRITE:
-		dptr = Pkt.data;
-		break;
-	    case PKCMD_WRITE6:
-		UnExpand6(Pkt.data, RxTmp, ActLen);
-		dptr = RxTmp;
-		break;
-	    case PKCMD_WRITE7:
-		UnCompress7(Pkt.data, RxTmp, ActLen);
-		dptr = RxTmp;
-		break;
-	    default:
-		puts("BaD2");
-		dptr = Pkt.data;
-		break;
-	    }
-	    if (DDebug)
-		printf("Recv Body   %02x %ld bytes\n", Pkt.ctl, ActLen);
+            switch(Pkt.ctl & PKF_MASK) {
+            case PKCMD_ACKRSTART:
+                dptr = Pkt.data;
+                break;
+            case PKCMD_WRITE:
+                dptr = Pkt.data;
+                break;
+            case PKCMD_WRITE6:
+                UnExpand6(Pkt.data, RxTmp, ActLen);
+                dptr = RxTmp;
+                break;
+            case PKCMD_WRITE7:
+                UnCompress7(Pkt.data, RxTmp, ActLen);
+                dptr = RxTmp;
+                break;
+            default:
+                puts("BaD2");
+                dptr = Pkt.data;
+                break;
+            }
+            Log(LogLevelDebug, "Recv Body   %02x %hu bytes\n", Pkt.ctl, ActLen);
 
-	    do_cmd(Pkt.ctl, dptr, ActLen);
+            do_cmd(Pkt.ctl, dptr, ActLen);
 
-	    RState = 0;
-	    break;
-	}
+            RState = 0;
+            break;
+        }
     }
 
     {
-	static short ExpAry[] = { 3, 2, 1, 4, 3, 2, 1, 0 };
+        static short ExpAry[] = { 3, 2, 1, 4, 3, 2, 1, 0 };
 
-	expect = ExpAry[RState];
+        expect = ExpAry[RState];
 
-	if (RState == 7)
-	    expect = BufLen - DBLen;
+        if (RState == 7)
+            expect = BufLen - DBLen;
     }
 #ifdef NOTDEF
     if (Rto_act) {
-	AbortIO((IOR *)&Rto);
-	WaitIO((IOR *)&Rto);
-	Rto_act = 0;
+        AbortIO((IOR *)&Rto);
+        WaitIO((IOR *)&Rto);
+        Rto_act = 0;
     }
     if (RState == 7) {
-	Rto.tr_time.tv_secs = 8;
-	Rto.tr_time.tv_micro= 0;
-	SendIO((IOR *)&Rto);
-	Rto_act = 1;
+        Rto.tr_time.tv_secs = 8;
+        Rto.tr_time.tv_micro= 0;
+        SendIO((IOR *)&Rto);
+        Rto_act = 1;
     }
 #endif
     do_cmd((uword)-1, NULL, 0);
     return((int)expect);
 }
-

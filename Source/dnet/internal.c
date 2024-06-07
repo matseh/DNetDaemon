@@ -2,44 +2,45 @@
 /*
  *  INTERNAL.C
  *
- *	DNET (c)Copyright 1988, Matthew Dillon, All Rights Reserved
+ *      DNET (c)Copyright 1988, Matthew Dillon, All Rights Reserved
  *
- *	Usually SCMD_OPEN requests attempt to connect() to the UNIX
- *	domain socket of the server.  However, some 'ports' are designated
- *	as internal to DNET.  They reside here.
+ *      Usually SCMD_OPEN requests attempt to connect() to the UNIX
+ *      domain socket of the server.  However, some 'ports' are designated
+ *      as internal to DNET.  They reside here.
  *
- *	-IALPHATERM
+ *      -IALPHATERM
  */
 
-#include "dnet.h"
-#include "../server/servers.h"
 #include <sys/stat.h>
 #include <sys/wait.h>
 #include <sys/resource.h>
 #include <sys/uio.h>
+#include <sgtty.h>
+#include <stdlib.h>
 #include <strings.h>
+#include <unistd.h>
+#include <util.h>
+#include "dnet.h"
+#include "../server/servers.h"
+#include "../lib/dnetutil.h"
 
-extern char *getenv();
+int ialphaterm_connect(int *pmaster);
 
-isinternalport(port)
-uword port;
+int isinternalport(uword port)
 {
     if (port == PORT_IALPHATERM)
-	return(1);
+        return(1);
     return(0);
 }
 
-iconnect(ps, port)
-int *ps;
-uword port;
+int iconnect(int *ps,uword port)
 {
     if (port == PORT_IALPHATERM)
-	return(ialphaterm_connect(ps, port));
+        return(ialphaterm_connect(ps));
     return(-1);
 }
 
-ialphaterm_connect(pmaster)
-int *pmaster;
+int ialphaterm_connect(int *pmaster)
 {
     struct sgttyb sg;
     struct tchars tc;
@@ -55,8 +56,11 @@ int *pmaster;
     int fdmaster;
     int fdslave;
     int pid;
+#ifdef __APPLE__
+    char slavename[PATH_MAX];
+#else
     char *slavename;
-
+#endif
     ioctl(0, TIOCGETP, (char *)&sg);
     ioctl(0, TIOCGETC, (char *)&tc);
     ioctl(0, TIOCGLTC, (char *)&ltc);
@@ -81,73 +85,70 @@ int *pmaster;
 #endif
 #endif
 
-    if (DDebug)
-	fprintf(stderr, "PTY openning internal pty\n");
+    Log(LogLevelDebug, "PTY openning internal pty\n");
+#ifdef __APPLE__
+    if (openpty(&fdmaster, &fdslave, slavename, NULL, NULL) >= 0) {
+#else
     if (openpty(&fdmaster, &fdslave, &slavename) >= 0) {
-	if (DDebug)
-	    fprintf(stderr, "PTY open successfull\n");
-	if ((pid = fork()) == NULL) {
-	    int i;
-	    setenv("DNET=", "IALPHATERM");
-	    setuid(getuid());
-	    signal(SIGHUP, SIG_DFL);
-	    signal(SIGINT, SIG_DFL);
-	    signal(SIGQUIT, SIG_DFL);
-	    signal(SIGTERM, SIG_DFL);
-	    signal(SIGCHLD, SIG_DFL);
-	    signal(SIGTSTP, SIG_IGN);
-	    ioctl(open("/dev/tty", 2), TIOCNOTTY, NULL);
-	    close(open(slavename, 0));
-	    dup2(fdslave, 0);
-	    dup2(0, 1);
-	    dup2(0, 2);
-	    for (i = 3; i < 256; ++i)
-		close(i);
-	    ioctl(0, TIOCSETN, &sg);
-	    ioctl(0, TIOCSETC, &tc);
-	    ioctl(0, TIOCSLTC, &ltc);
-	    ioctl(0, TIOCLSET, &lmode);
+#endif
+        Log(LogLevelDebug, "PTY open successfull\n");
+        if ((pid = fork()) == 0) {
+            int i;
+            setenv("DNET", "IALPHATERM", 1);
+            setuid(getuid());
+            signal(SIGHUP, SIG_DFL);
+            signal(SIGINT, SIG_DFL);
+            signal(SIGQUIT, SIG_DFL);
+            signal(SIGTERM, SIG_DFL);
+            signal(SIGCHLD, SIG_DFL);
+            signal(SIGTSTP, SIG_IGN);
+            ioctl(open("/dev/tty", 2), TIOCNOTTY, NULL);
+            close(open(slavename, 0));
+            dup2(fdslave, 0);
+            dup2(0, 1);
+            dup2(0, 2);
+            for (i = 3; i < 256; ++i)
+                close(i);
+            ioctl(0, TIOCSETN, &sg);
+            ioctl(0, TIOCSETC, &tc);
+            ioctl(0, TIOCSLTC, &ltc);
+            ioctl(0, TIOCLSET, &lmode);
 #ifdef TIOCSWINSZ
-	    ioctl(0, TIOCSWINSZ, &ws);
+            ioctl(0, TIOCSWINSZ, &ws);
 #else
 #ifdef TIOCSSIZE
-	    ioctl(0, TIOCSSIZE, &ts);
+            ioctl(0, TIOCSSIZE, &ts);
 #endif
 #endif
-	    {
-		char *shell = getenv("SHELL");
-		char *home = getenv("HOME");
-		if (!shell)
-		    shell = "/bin/sh";
-		if (!home)
-		    home = ".";
-		chdir(home);
-		execl(shell, "-fshell", NULL);
-		perror(shell);
-	    }
-	    _exit(1);
-	}
-	if (pid > 0) {
-	    *pmaster = fdmaster;
-	    close(fdslave);
-	    if (DDebug)
-		fprintf(stderr, "PTY OPEN OK.2\n");
-	    return(1);
-	}
-	close(fdmaster);
-	close(fdslave);
-	if (DDebug)
-	    fprintf(stderr, "PTY OPEN FAILURE.1\n");
+            {
+                char *shell = getenv("SHELL");
+                char *home = getenv("HOME");
+                if (!shell)
+                    shell = "/bin/sh";
+                if (!home)
+                    home = ".";
+                chdir(home);
+                execl(shell, "-fshell", NULL);
+                perror(shell);
+            }
+            _exit(1);
+        }
+        if (pid > 0) {
+            *pmaster = fdmaster;
+            close(fdslave);
+            Log(LogLevelDebug, "PTY OPEN OK.2\n");
+            return(1);
+        }
+        close(fdmaster);
+        close(fdslave);
+        Log(LogLevelDebug, "PTY OPEN FAILURE.1\n");
     }
-    if (DDebug)
-	fprintf(stderr, "PTY OPEN FAILURE.2\n");
+    Log(LogLevelDebug, "PTY OPEN FAILURE.2\n");
     return(-1);
 }
 
-openpty(pfdm, pfds, pnames)
-int *pfdm;
-int *pfds;
-char **pnames;
+#ifndef __APPLE__
+int openpty(int *pfdm,int *pfds,char **pnames);
 {
     static char ptcs[] = { "0123456789abcdef" };
     static char plate[] = { "/dev/ptyxx" };
@@ -156,61 +157,61 @@ char **pnames;
     int j;
 
     for (i = 'p';; ++i) {
-	plate[8] = i;
-	plate[9] = ptcs[0];
-	if (lstat(plate, &stat) < 0)
-		break;
-	for (j = 0; ptcs[j]; ++j) {
-	    plate[9] = ptcs[j];
-	    plate[5] = 'p';
-	    if ((*pfdm = open(plate, O_RDWR)) >= 0) {
-		plate[5] = 't';
-		if ((*pfds = open(plate, O_RDWR)) >= 0) {
-		    *pnames = plate;
-		    if (DDebug)
-			fprintf(stderr, "PTY FOUND %s\n", *pnames);
-		    return(1);
-		}
-		close(*pfdm);
-	    }
-	}
+        plate[8] = i;
+        plate[9] = ptcs[0];
+        if (lstat(plate, &stat) < 0)
+                break;
+        for (j = 0; ptcs[j]; ++j) {
+            plate[9] = ptcs[j];
+            plate[5] = 'p';
+            if ((*pfdm = open(plate, O_RDWR)) >= 0) {
+                plate[5] = 't';
+                if ((*pfds = open(plate, O_RDWR)) >= 0) {
+                    *pnames = plate;
+                    Log(LogLevelDebug, "PTY FOUND %s\n", *pnames);
+                    return(1);
+                }
+                close(*pfdm);
+            }
+        }
     }
     return(-1);
 }
+#endif
 
-isetrows(fd, rows)
+void isetrows(int fd, int rows)
 {
 #ifdef TIOCSWINSZ
     struct winsize ws;
     if (ioctl(fd, TIOCGWINSZ, &ws) >= 0) {
-	ws.ws_row = rows;
-	ioctl(fd, TIOCSWINSZ, &ws);
+        ws.ws_row = rows;
+        ioctl(fd, TIOCSWINSZ, &ws);
     }
 #else
 #ifdef TIOCSSIZE
     struct ttysize ts;
     if (ioctl(fd, TIOCGSIZE, &ts) >= 0) {
-	ts.ts_lines = rows;
-	ioctl(fd, TIOCSSIZE, &ts);
+        ts.ts_lines = rows;
+        ioctl(fd, TIOCSSIZE, &ts);
     }
 #endif
 #endif
 }
 
-isetcols(fd, cols)
+void isetcols(int fd, int cols)
 {
 #ifdef TIOCSWINSZ
     struct winsize ws;
     if (ioctl(fd, TIOCGWINSZ, &ws) >= 0) {
-	ws.ws_col = cols;
-	ioctl(fd, TIOCSWINSZ, &ws);
+        ws.ws_col = cols;
+        ioctl(fd, TIOCSWINSZ, &ws);
     }
 #else
 #ifdef TIOCSSIZE
     struct ttysize ts;
     if (ioctl(fd, TIOCGSIZE, &ts) >= 0) {
-	ts.ts_cols = cols;
-	ioctl(fd, TIOCSSIZE, &ts);
+        ts.ts_cols = cols;
+        ioctl(fd, TIOCSSIZE, &ts);
     }
 #endif
 #endif

@@ -16,6 +16,10 @@
 #define CEOFCMD struct _CEOFCMD
 #define CIOCTL  struct _CIOCTL
 
+typedef unsigned char   ubyte;
+typedef unsigned short  uword;
+typedef unsigned long   ulong;
+
 CSWITCH {		/*  SWITCH current data channel */
     ubyte   chanh;	/*  channel to switch to	*/
     ubyte   chanl;

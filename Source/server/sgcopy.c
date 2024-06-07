@@ -19,36 +19,46 @@
 #include <sys/dir.h>
 #include <sys/file.h>
 #include <sys/resource.h>
+#include <stdint.h>
 #include <stdio.h>
+#include <string.h>
 #include <errno.h>
 #include <signal.h>
+#include <unistd.h>
 
 #include "servers.h"
+#include "../lib/dnetlib.h"
 
 typedef struct {
-    char    Cmd;
-    char    Str[64];
-    long    Val;
+    char     Cmd;
+    char     Str[64];
+    uint32_t Val;
 } HDR;
 
 typedef unsigned char ubyte;
-char *getnamepart();
-char *getdirpart();
+
+int SGCopy(int fd);
+int PutObject(char *str);
+int PutDir(char *name);
+int PutFile(char *name);
+int WriteHeader(char c,char *str,uint32_t len);
+int ReadHeader(HDR *hdr);
+char *getnamepart(char *str);
+char *getdirpart(char *str);
 
 char Buf[4096];
 int Chan;
 
-chandler()
+void chandler(int signal)
 {
-    union wait stat;
+    int stat;
     struct rusage rus;
     while (wait3(&stat, WNOHANG, &rus) > 0);
 }
 
-main(ac,av)
-char *av[];
+int main(int ac,char *av[])
 {
-    long chann = DListen(PORT_GFILECOPY);
+    CHANN *chann = DListen(PORT_GFILECOPY);
     int fd;
     int n;
     char buf[256];
@@ -65,7 +75,7 @@ char *av[];
 		continue;
 	    break;
 	}
-	if (fork() == NULL) {
+	if (fork() == 0) {
 	    SGCopy(fd);
 	    _exit(1);
 	}
@@ -74,8 +84,7 @@ char *av[];
     perror("SCOPY");
 }
 
-SGCopy(fd)
-int fd;
+int SGCopy(int fd)
 {
     short error = 0;
     static HDR Hdr;
@@ -115,11 +124,10 @@ int fd;
 	}
     }
 done:
-    ;
+    return error;
 }
 
-PutObject(str)
-char *str;
+int PutObject(char *str)
 {
     struct stat stat;
     short error = 0;
@@ -136,8 +144,7 @@ char *str;
     return(0);
 }
 
-PutDir(name)
-char *name;
+int PutDir(char *name)
 {
     struct stat stat;
     char svdir[1024];
@@ -152,7 +159,7 @@ char *name;
 	error = 1;
 	goto done;
     }
-    if (error = WriteHeader('D', fn, 0)) 
+    if ((error = WriteHeader('D', fn, 0))) 
 	goto done;
     switch(ReadHeader(&Hdr)) {
     case 'Y':
@@ -177,7 +184,7 @@ char *name;
     if (error)
 	goto done;
 
-    while (de = readdir(dir)) {
+    while ((de = readdir(dir))) {
 	if (strcmp(de->d_name, ".") == 0)
 	    continue;
 	if (strcmp(de->d_name, "..") == 0)
@@ -199,8 +206,7 @@ done:
     return(error);
 }
 
-PutFile(name)
-char *name;
+int PutFile(char *name)
 {
     int fd = -1;
     static HDR Hdr;
@@ -214,7 +220,7 @@ char *name;
 	goto done;
     }
     len = lseek(fd, 0L, 2);
-    if (error = WriteHeader('F', fn, len))
+    if ((error = WriteHeader('F', fn, len)))
 	goto done;
     switch(ReadHeader(&Hdr)) {
     case 'Y':
@@ -254,10 +260,7 @@ done:
 }
 
 
-WriteHeader(c, str, len)
-char c;
-char *str;
-long len;
+int WriteHeader(char c,char *str,uint32_t len)
 {
     ubyte sl;
 
@@ -267,26 +270,25 @@ long len;
 
     if (gwrite(Chan, &c, 1) < 0)
 	return(1);
-    if (gwrite(Chan, &sl,1) < 0)
+    if (gwrite(Chan, (char *) &sl,1) < 0)
 	return(1);
     if (gwrite(Chan, str, sl) != sl)
 	return(1);
     len = htonl68(len);
-    if (gwrite(Chan, &len, 4) != 4)
+    if (gwrite(Chan, (char *) &len, 4) != 4)
 	return(1);
     return(0);
 }
 
-ReadHeader(hdr)
-HDR *hdr;
+int ReadHeader(HDR *hdr)
 {
     ubyte sl;
     ubyte cmd;
 
     hdr->Cmd = -1;
-    if (ggread(Chan, &cmd, 1) != 1)
+    if (ggread(Chan, (char *) &cmd, 1) != 1)
 	return(-1);
-    if (ggread(Chan, &sl, 1) != 1)
+    if (ggread(Chan, (char *) &sl, 1) != 1)
 	return(-1);
     if (sl >= sizeof(hdr->Str)) {
 	return(-1);
@@ -294,16 +296,14 @@ HDR *hdr;
     if (ggread(Chan, hdr->Str, sl) != sl)
 	return(-1);
     hdr->Str[sl] = 0;
-    if (ggread(Chan, &hdr->Val, 4) != 4)
+    if (ggread(Chan, (char *) &hdr->Val, 4) != 4)
 	return(-1);
     hdr->Val = ntohl68(hdr->Val);
     hdr->Cmd = cmd;
     return(hdr->Cmd);
 }
 
-char *
-getnamepart(str)
-char *str;
+char *getnamepart(char *str)
 {
     register char *ptr = str + strlen(str);
 
@@ -315,9 +315,7 @@ char *str;
     return(ptr+1);
 }
 
-char *
-getdirpart(str)
-char *str;
+char *getdirpart(char *str)
 {
     static char buf[1024];
 

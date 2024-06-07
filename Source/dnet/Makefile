@@ -9,12 +9,16 @@
 #	and then setenv DNETDIR ~/.DNET/  ... all clients and servers will
 #	use the enviroment variable to find/create the UNIX level sockets.
 
+LIB = ../lib/dnetutil.o
 BIN	= ../bin
 OBJS	= dnet.o control.o files.o globals.o net.o subs.o internal.o \
 	  dataconv.o packet.o
 
-$(BIN)/dnet:	$(OBJS)
-	cc $(OBJS) -o $(BIN)/dnet
+$(BIN)/dnet: lib $(OBJS)
+	cc $(OBJS) $(LIB) -o $(BIN)/dnet
+
+lib:
+	$(MAKE) -C ../lib
 
 clean:	
 	rm -f *.o make.out

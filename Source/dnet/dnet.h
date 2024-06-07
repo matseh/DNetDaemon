@@ -36,25 +36,6 @@
 #define LASTTRYDNETSERVERS "/usr/local/lib/dnet/dnet.servers"
 #endif
 
-struct Node {
-    struct Node *ln_Succ;
-    struct Node *ln_Pred;
-};
-
-struct List {
-    struct Node *lh_Head;
-    struct Node *lh_Tail;
-    struct Node *lh_TailPred;
-};
-
-
-typedef unsigned char	ubyte;
-typedef unsigned short	uword;
-typedef unsigned long	ulong;
-
-typedef struct List	    LIST;
-typedef struct Node	    NODE;
-
 #include "channel.h"
 
 #define PKT struct _PKT
@@ -77,6 +58,20 @@ typedef struct Node	    NODE;
 #define MAXPACKET ((MAXPKT * 8 + 5) / 6 + 64)
 
 #define OVERHEAD    7	/*  for packets with data	    */
+
+struct Node {
+    struct Node *ln_Succ;
+    struct Node *ln_Pred;
+};
+
+struct List {
+    struct Node *lh_Head;
+    struct Node *lh_Tail;
+    struct Node *lh_TailPred;
+};
+
+typedef struct List     LIST;
+typedef struct Node     NODE;
 
 XIOR {
     NODE    io_Node;
@@ -204,10 +199,6 @@ CTLPKT {
 #define CHANF_LCLOSE	0x04 	/*  channel closed on our side  */
 #define CHANF_RCLOSE	0x08    /*  channel closed on rem side  */
 
-extern ubyte *RemHead();
-extern ubyte *malloc();
-extern char *getenv();
-
 #ifndef NOEXT
 extern int DNet_fd;
 extern PKT Pkts[9];
@@ -218,7 +209,7 @@ extern LIST TxList;	       /*  For pending DNCMD_WRITE reqs.   */
 extern fd_set Fdread;
 extern fd_set Fdwrite;
 extern fd_set Fdexcept;
-extern void (*Fdstate[FD_SETSIZE])();
+extern void (*Fdstate[FD_SETSIZE])(int,int);
 extern ubyte Fdperm[FD_SETSIZE];
 extern uword FdChan[FD_SETSIZE];
 extern ubyte RcvBuf[RCVBUF];
@@ -242,5 +233,60 @@ extern ubyte Mode7;
 extern int errno;
 extern int WReady;
 
-#endif
+void do_netreset(void);
+void setlistenport(char *remotehost);
 
+void WriteStream(int sdcmd,const void *buf,int len,uword chan);
+int alloc_channel(void);
+void ClearChan(LIST *list, uword chan, int all);
+
+void Enqueue(LIST *list,XIOR *ior);
+void AddTail(LIST *list,NODE *node);
+void AddHead(LIST *list,NODE *node);
+ubyte *RemHead(LIST *list);
+void NewList(LIST *list);
+
+int chkbuf(ubyte *buf,uword bytes);
+
+void TimerOpen(void);
+void TimerClose(void);
+void WTimeout(int secs);
+
+void dneterror(char *str);
+void startserver(uword port);
+
+void RcvInt(void);
+void NetOpen(void);
+void NetClose(void);
+void NetWrite(ubyte *buf, int bytes);
+void gwrite(int fd, const void * const buffer, long bytes);
+
+void do_rto(void);
+void do_wto(void);
+void do_rnet(void);
+void do_wupdate(void);
+void do_cmd(short ctl,ubyte *buf,int bytes);
+
+void BuildDataPacket(PKT *pkt,ubyte win,ubyte *dbuf,uword actlen);
+PKT *BuildRestartAckPacket(ubyte *dbuf,ubyte bytes);
+void WritePacket(PKT *pkt);
+void WriteNak(int win);
+void WriteAck(int win);
+void WriteChk(int win);
+void WriteRestart(void);
+int RecvPacket(ubyte *ptr,long len);
+
+int isinternalport(uword port);
+int iconnect(int *ps,uword port);
+int ialphaterm_connect(int *pmaster);
+void isetrows(int fd, int rows);
+void isetcols(int fd, int cols);
+
+void do_open(int nn, int fd);
+
+int Compress7(ubyte *s,ubyte *db,uword n);
+void UnCompress7(ubyte *s,ubyte *d,uword n);
+int Expand6(ubyte *s,ubyte *db,uword n);
+void UnExpand6(ubyte *s,ubyte *d,uword n);
+
+#endif

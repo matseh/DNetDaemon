@@ -20,20 +20,22 @@
 #include <sys/resource.h>
 #include <errno.h>
 #include <signal.h>
+#include <stdlib.h>
+#include <unistd.h>
 
 #include "servers.h"
+#include "../lib/dnetlib.h"
 
-chandler()
+void chandler(int signal)
 {
-    union wait stat;
+    int stat;
     struct rusage rus;
     while (wait3(&stat, WNOHANG, &rus) > 0);
 }
 
-main(ac,av)
-char *av[];
+int main(int ac,char *av[])
 {
-    long chann = DListen(PORT_ALPHATERM);
+    CHANN *chann = DListen(PORT_ALPHATERM);
     int fd;
     int n;
     char buf[256];
@@ -50,7 +52,7 @@ char *av[];
 		continue;
 	    break;
 	}
-	if (fork() == NULL) {
+	if (fork() == 0) {
 	    dup2(fd, 0);
 	    dup2(fd, 1);
 	    dup2(fd, 2);

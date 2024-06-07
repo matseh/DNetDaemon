@@ -2,16 +2,19 @@
 /*
  *  NET.C
  *
- *	DNET (c)Copyright 1988, Matthew Dillon, All Rights Reserved
+ *      DNET (c)Copyright 1988, Matthew Dillon, All Rights Reserved
  *
  *  NetWork raw device interface.  Replace with whatever interface you
  *  want.
  */
 
-#include "dnet.h"
 #include <sys/stat.h>
+#include <sgtty.h>
+#include <unistd.h>
+#include "dnet.h"
+#include "../lib/dnetutil.h"
 
-RcvInt()
+void RcvInt(void)
 {
     int n = read(0, RcvBuf + RcvData, RCVBUF - RcvData);
     int i;
@@ -19,17 +22,16 @@ RcvInt()
 
     errno = 0;
     if (n >= 0)
-	RcvData += n;
+        RcvData += n;
     if (n <= 0)         /* disallow infinite fast-timeout select loops */
-	RExpect = 0;
-    if (DDebug)
-	printf("read(%d,%d)\n", n, errno);
+        RExpect = 0;
+    Log(LogLevelDebug, "read(%d,%d)\n", n, errno);
 }
 
-static struct sgttyb	ttym;
-static struct stat	Stat;
+static struct sgttyb    ttym;
+static struct stat      Stat;
 
-NetOpen()
+void NetOpen(void)
 {
     int async = 1;
 
@@ -54,7 +56,7 @@ NetOpen()
     ioctl (0, FIONBIO, &async);
 }
 
-NetClose()
+void NetClose(void)
 {
     int async = 0;
 
@@ -69,43 +71,43 @@ NetClose()
     ioctl (0, TIOCSETP, &ttym);
 }
 
-NetWrite(buf, bytes)
-ubyte *buf;
+void NetWrite(ubyte *buf, int bytes)
 {
-    if (DDebug)
-	fprintf(stderr, "NETWRITE %08lx %ld\n", buf, bytes);
+    Log(LogLevelDebug, "NETWRITE %08lx %d\n", (unsigned long) buf, bytes);
     gwrite(0, buf, bytes);
 }
 
-gwrite(fd, buf, bytes)
-register char *buf;
-register long bytes;
+void gwrite(int fd, const void * const buffer, long bytes)
 {
+    const char *buf = buffer;
     register long n;
+
+    Log(LogLevelDebug, "gread(fd=%d,buf=%p,bytes=%d)\n", fd, buf, bytes);
+
     while (bytes) {
-	n = write(fd, buf, bytes);
-	if (n > 0) {
-	    bytes -= n;
-	    buf += n;
-	    continue;
-	}
-	if (errno == EINTR)
-	    continue;
-	if (errno == EWOULDBLOCK) {
-	    fd_set fd_wr;
-	    fd_set fd_ex;
-	    FD_ZERO(&fd_wr);
-	    FD_ZERO(&fd_ex);
-	    FD_SET(fd, &fd_wr);
-	    FD_SET(fd, &fd_ex);
-	    if (select(fd+1, NULL, &fd_wr, &fd_ex, NULL) < 0) {
-	 	perror("select");
-	    }
-	    continue;
-	}
-	if (errno == EPIPE)
-	    return;
-	dneterror("gwrite");
+        n = write(fd, buf, bytes);
+        if (n > 0) {
+            bytes -= n;
+            buf += n;
+            continue;
+        }
+        if (errno == EINTR)
+            continue;
+        if (errno == EWOULDBLOCK) {
+            fd_set fd_wr;
+            fd_set fd_ex;
+            FD_ZERO(&fd_wr);
+            FD_ZERO(&fd_ex);
+            FD_SET(fd, &fd_wr);
+            FD_SET(fd, &fd_ex);
+            if (select(fd+1, NULL, &fd_wr, &fd_ex, NULL) < 0) {
+                perror("select");
+            }
+            continue;
+        }
+        if (errno == EPIPE)
+            return;
+        dneterror("gwrite");
     }
 }
 

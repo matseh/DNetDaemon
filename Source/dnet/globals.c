@@ -34,8 +34,6 @@ uword WPStart;
 uword WPUsed;
 uword RState;
 uword Rto_act, Wto_act;
-ubyte DDebug;
-ubyte PDebug;
 ubyte Restart;
 ubyte DeldQuit;
 ulong NumCon;

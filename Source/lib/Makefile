@@ -1,5 +1,4 @@
+all: dnetlib.o dnetutil.o
 
-
-dnetlib.o : dnetlib.c
-	cc -c dnetlib.c
-
+%.o : %.c
+	cc -c $< -o $@
