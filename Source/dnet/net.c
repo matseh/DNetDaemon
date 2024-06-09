@@ -8,15 +8,30 @@
  *  want.
  */
 
+#include <stddef.h>
+#include <stdio.h>
+#include <string.h>
 #include <sys/stat.h>
 #include <sgtty.h>
+#include <termios.h>
 #include <unistd.h>
 #include "dnet.h"
 #include "../lib/dnetutil.h"
 
+#ifndef TRUE
+#define TRUE 1
+#endif
+#ifndef FALSE
+#define FALSE 0
+#endif
+
+static int netFd = -1;
+
+static struct termios originalTtyAttributes;
+
 void RcvInt(void)
 {
-    int n = read(0, RcvBuf + RcvData, RCVBUF - RcvData);
+    int n = read(netFd, RcvBuf + RcvData, RCVBUF - RcvData);
     int i;
     extern int errno;
 
@@ -31,50 +46,132 @@ void RcvInt(void)
 static struct sgttyb    ttym;
 static struct stat      Stat;
 
-void NetOpen(void)
+static int configureSerialDevice(const char *serialDevicePath, int serialDeviceFd, int baudRate)
+{
+    if(ioctl(serialDeviceFd, TIOCEXCL) == -1)
+    {
+        Log(LogLevelError, "Error setting TIOCEXCL on %s: %s (%d).\n", serialDevicePath, strerror(errno), errno);
+    }
+    else if(tcgetattr(serialDeviceFd, &originalTtyAttributes) == -1)
+    {
+        Log(LogLevelError, "Error getting tty attributes on %s: %s (%d).\n", serialDevicePath, strerror(errno), errno);
+    }
+    else
+    {
+        struct termios ttyAttributes = originalTtyAttributes;
+
+        cfmakeraw(&ttyAttributes);
+
+        ttyAttributes.c_cflag = CS8|CREAD|CLOCAL;
+
+        if(baudRate > 0)
+        {
+            cfsetspeed(&ttyAttributes, baudRate);                
+        }
+
+        if(tcsetattr(serialDeviceFd, TCSANOW, &ttyAttributes) == -1)
+        {
+            Log(LogLevelError, "Error setting tty attributes on %s: %s (%d).\n", serialDevicePath, strerror(errno), errno);
+        }
+
+        if(tcgetattr(serialDeviceFd, &ttyAttributes) == -1)
+        {
+            Log(LogLevelError, "Error getting tty attributes on %s: %s (%d).\n", serialDevicePath, strerror(errno), errno);
+        }
+        else
+        {
+            Log(LogLevelInfo, "Input baud rate is %d\n", (int) cfgetispeed(&ttyAttributes));
+            Log(LogLevelInfo, "Output baud rate is %d\n", (int) cfgetospeed(&ttyAttributes));
+
+            return TRUE;
+        }
+    }
+
+    return FALSE;
+}
+
+int NetOpen(const char *serialDevicePath, int baudRate)
 {
     int async = 1;
 
-    fstat(0, &Stat);
-    fchmod(0, 0600);
-    /*
-    signal(SIGIO, RcvInt);
-    */
-    ioctl (0, TIOCGETP, &ttym);
-    if (Mode7) {
-        ttym.sg_flags &= ~RAW;
-        ttym.sg_flags |= CBREAK;
-    } else {
-        ttym.sg_flags |= RAW;
-        ttym.sg_flags &= ~CBREAK;
+    if(serialDevicePath)
+    {
+        Log(LogLevelInfo, "Opening serial port %s.\n", serialDevicePath);
+
+        netFd = open(serialDevicePath, O_RDWR|O_NOCTTY|O_NONBLOCK);
+
+        if(netFd == -1)
+        {
+            Log(LogLevelError, "Error opening serial port %s: %s (%d).\n", serialDevicePath, strerror(errno), errno);
+        }
+        else if(!configureSerialDevice(serialDevicePath, netFd, baudRate))
+        {
+            close(netFd);
+
+            netFd = -1;
+        }
     }
-    ttym.sg_flags &= ~ECHO;
-    ioctl (0, TIOCSETP, &ttym);
-    /*
-    ioctl (0, FIOASYNC, &async);
-    */
-    ioctl (0, FIONBIO, &async);
+    else
+    {
+        netFd = 0;
+
+        fstat(0, &Stat);
+        fchmod(0, 0600);
+        /*
+        signal(SIGIO, RcvInt);
+        */
+        ioctl (0, TIOCGETP, &ttym);
+        if (Mode7) {
+            ttym.sg_flags &= ~RAW;
+            ttym.sg_flags |= CBREAK;
+        } else {
+            ttym.sg_flags |= RAW;
+            ttym.sg_flags &= ~CBREAK;
+        }
+        ttym.sg_flags &= ~ECHO;
+        ioctl (0, TIOCSETP, &ttym);
+        /*
+        ioctl (0, FIOASYNC, &async);
+        */
+    }
+
+    if(netFd != -1)
+    {
+        ioctl (netFd, FIONBIO, &async);
+    }
+
+    return netFd;
 }
 
 void NetClose(void)
 {
     int async = 0;
 
-    fchmod(0, Stat.st_mode);
-    ioctl (0, FIONBIO, &async);
-    /*
-    ioctl (0, FIOASYNC, &async);
-    */
-    ioctl (0, TIOCGETP, &ttym);
-    ttym.sg_flags &= ~RAW;
-    ttym.sg_flags |= ECHO;
-    ioctl (0, TIOCSETP, &ttym);
+    fchmod(netFd, Stat.st_mode);
+    ioctl (netFd, FIONBIO, &async);
+
+    if(netFd > 0)
+    {
+        tcsetattr(netFd, TCSANOW, &originalTtyAttributes);
+
+        close(netFd);
+    }
+    else
+    {
+        /*
+        ioctl (0, FIOASYNC, &async);
+        */
+        ioctl (0, TIOCGETP, &ttym);
+        ttym.sg_flags &= ~RAW;
+        ttym.sg_flags |= ECHO;
+        ioctl (0, TIOCSETP, &ttym);        
+    }
 }
 
 void NetWrite(ubyte *buf, int bytes)
 {
     Log(LogLevelDebug, "NETWRITE %08lx %d\n", (unsigned long) buf, bytes);
-    gwrite(0, buf, bytes);
+    gwrite(netFd, buf, bytes);
 }
 
 void gwrite(int fd, const void * const buffer, long bytes)

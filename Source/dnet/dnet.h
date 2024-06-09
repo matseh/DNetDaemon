@@ -256,7 +256,7 @@ void dneterror(char *str);
 void startserver(uword port);
 
 void RcvInt(void);
-void NetOpen(void);
+int NetOpen(const char *serialDevicePath, int baudRate);
 void NetClose(void);
 void NetWrite(ubyte *buf, int bytes);
 void gwrite(int fd, const void * const buffer, long bytes);
